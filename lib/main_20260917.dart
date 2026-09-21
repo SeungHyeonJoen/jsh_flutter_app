@@ -1,0 +1,974 @@
+import 'dart:async';
+import 'dart:math';
+import 'dart:ui' as ui;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MultiGameApp());
+}
+
+class MultiGameApp extends StatelessWidget {
+  const MultiGameApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '3종 미니게임 모음집',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        primarySwatch: Colors.indigo,
+        useMaterial3: true,
+      ),
+      home: const MainMenuScreen(),
+    );
+  }
+}
+
+// ==========================================
+// 메인 메뉴 화면
+// ==========================================
+class MainMenuScreen extends StatelessWidget {
+  const MainMenuScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('🎮 3종 미니게임 세트'),
+        centerTitle: true,
+        backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
+      ),
+      body: Container(
+        padding: const EdgeInsets.all(24.0),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.indigo.shade100, Colors.white],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '원하시는 게임을 선택하세요',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 30),
+            _buildGameCard(
+              context,
+              title: '1. 토끼 탈출기 (Parallax & Day-Night)',
+              subtitle: '산속을 깡총깡총 달리는 토끼 어드벤처!',
+              icon: Icons.directions_run,
+              color: Colors.orange,
+              targetScreen: const RabbitRunScreen(),
+            ),
+            const SizedBox(height: 16),
+            _buildGameCard(
+              context,
+              title: '2. 3초 반응속도 테스트',
+              subtitle: '화면이 초록색으로 바뀔 때 즉시 터치!',
+              icon: Icons.timer,
+              color: Colors.green,
+              targetScreen: const ReactionTestScreen(),
+            ),
+            const SizedBox(height: 16),
+            _buildGameCard(
+              context,
+              title: '3. 1to25 순발력 측정',
+              subtitle: '1부터 25까지의 숫자를 최대한 빠르게 순서대로 터치!',
+              icon: Icons.grid_on,
+              color: Colors.purple,
+              targetScreen: const OneToTwentyFiveScreen(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGameCard(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required Widget targetScreen,
+  }) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        leading: CircleAvatar(
+          backgroundColor: color,
+          radius: 26,
+          child: Icon(icon, color: Colors.white, size: 28),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.arrow_forward_ios),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => targetScreen),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ==========================================
+// GAME 1: 토끼 탈출기 (RabbitRunScreen)
+// ==========================================
+enum RabbitState { run, jump, slide }
+enum ObstacleType { ground, air }
+
+class Obstacle {
+  double x;
+  final ObstacleType type;
+  bool passed = false;
+
+  Obstacle({required this.x, required this.type});
+}
+
+class RabbitRunScreen extends StatefulWidget {
+  const RabbitRunScreen({super.key});
+
+  @override
+  State<RabbitRunScreen> createState() => _RabbitRunScreenState();
+}
+
+class _RabbitRunScreenState extends State<RabbitRunScreen> {
+  ui.Image? spriteSheet;
+  bool isImageLoading = true;
+
+  Timer? _gameLoop;
+  bool isPlaying = false;
+  bool isGameOver = false;
+  int score = 0;
+
+  // 물리학 변수
+  double rabbitY = 0;
+  double jumpProgress = 0.0; 
+  final double jumpDurationSeconds = 0.75;
+  final double maxJumpHeight = 135.0;
+
+  // Slide 타이밍
+  double slideProgress = 0.0;
+  final double slideDurationSeconds = 0.65;
+
+  RabbitState rabbitState = RabbitState.run;
+  int currentFrame = 0;
+  int frameTimer = 0;
+
+  // 게임 진행 상태 & 패럴랙스 스크롤
+  double elapsedTime = 0.0;
+  double gameSpeed = 3.0;
+  double bgScrollOffset = 0.0;
+
+  // 장애물 스폰 시스템
+  List<Obstacle> obstacles = [];
+  double timeSinceLastSpawn = 0.0;
+  ObstacleType? lastSpawnType;
+  final Random _random = Random();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAndCleanSpriteSheet();
+  }
+
+  // 흰색 배경 제거 및 투명 이미지 변환 로직
+  Future<void> _loadAndCleanSpriteSheet() async {
+    try {
+      final ByteData data = await rootBundle.load('assets/rabbitSpritesheet.png');
+      final Uint8List bytes = data.buffer.asUint8List();
+      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+      final ui.FrameInfo frameInfo = await codec.getNextFrame();
+      final ui.Image rawImage = frameInfo.image;
+
+      final ByteData? rawByteData = await rawImage.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (rawByteData == null) return;
+
+      final Uint8List pixels = rawByteData.buffer.asUint8List();
+
+      // RGB 값이 240 이상인 흰색계열 영역을 완전 투명(Alpha = 0)으로 마스킹
+      for (int i = 0; i < pixels.length; i += 4) {
+        int r = pixels[i];
+        int g = pixels[i + 1];
+        int b = pixels[i + 2];
+
+        if (r > 240 && g > 240 && b > 240) {
+          pixels[i + 3] = 0; 
+        }
+      }
+
+      final Completer<ui.Image> completer = Completer();
+      ui.decodeImageFromPixels(
+        pixels,
+        rawImage.width,
+        rawImage.height,
+        ui.PixelFormat.rgba8888,
+        (ui.Image img) => completer.complete(img),
+      );
+
+      final ui.Image transparentImg = await completer.future;
+
+      if (mounted) {
+        setState(() {
+          spriteSheet = transparentImg;
+          isImageLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("이미지 투명화 처리 오류: $e");
+      if (mounted) {
+        setState(() {
+          isImageLoading = false;
+        });
+      }
+    }
+  }
+
+  void _startGame() {
+    setState(() {
+      isPlaying = true;
+      isGameOver = false;
+      score = 0;
+      rabbitY = 0;
+      jumpProgress = 0.0;
+      slideProgress = 0.0;
+      rabbitState = RabbitState.run;
+      obstacles.clear();
+      elapsedTime = 0.0;
+      gameSpeed = 3.0;
+      bgScrollOffset = 0.0;
+      timeSinceLastSpawn = 0.0;
+      lastSpawnType = null;
+      currentFrame = 0;
+    });
+
+    _gameLoop?.cancel();
+    _gameLoop = Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      _updateGame(0.016);
+    });
+  }
+
+  void _updateGame(double dt) {
+    if (!isPlaying || isGameOver) return;
+
+    setState(() {
+      elapsedTime += dt;
+      timeSinceLastSpawn += dt;
+      score = (elapsedTime * 10).toInt();
+
+      if (elapsedTime < 20.0) {
+        gameSpeed = 3.0;
+      } else if (elapsedTime < 45.0) {
+        gameSpeed = 3.6;
+      } else if (elapsedTime < 75.0) {
+        gameSpeed = 4.3;
+      } else if (elapsedTime < 110.0) {
+        gameSpeed = 5.0;
+      } else {
+        gameSpeed = min(6.5, 5.0 + (elapsedTime - 110.0) * 0.02);
+      }
+
+      bgScrollOffset += gameSpeed;
+
+      // JUMP 자연스러운 동작 매핑 (2행 0, 1, 3, 5번 프레임)
+      if (rabbitState == RabbitState.jump) {
+        jumpProgress += dt / jumpDurationSeconds;
+        if (jumpProgress >= 1.0) {
+          jumpProgress = 0.0;
+          rabbitY = 0;
+          rabbitState = RabbitState.run;
+        } else {
+          rabbitY = sin(jumpProgress * pi) * maxJumpHeight;
+          // 점프 행에는 실제 캐릭터가 있는 0~3 프레임만 사용한다.
+          // 0(웅크림) -> 1(도약) -> 2(공중) -> 3(착지)
+          if (jumpProgress < 0.18) {
+            currentFrame = 0;
+          } else if (jumpProgress < 0.42) {
+            currentFrame = 1;
+          } else if (jumpProgress < 0.70) {
+            currentFrame = 2;
+          } else {
+            currentFrame = 3;
+          }
+        }
+      }
+
+      // SLIDE 자연스러운 동작 매핑 (3행 0~3번 프레임)
+      if (rabbitState == RabbitState.slide) {
+        slideProgress += dt / slideDurationSeconds;
+        if (slideProgress >= 1.0) {
+          slideProgress = 0.0;
+          rabbitState = RabbitState.run;
+        } else {
+          if (slideProgress < 0.25) {
+            currentFrame = 0;
+          } else if (slideProgress < 0.50) {
+            currentFrame = 1;
+          } else if (slideProgress < 0.75) {
+            currentFrame = 2;
+          } else {
+            currentFrame = 3;
+          }
+        }
+      }
+
+      // RUN 자연스러운 동작 매핑 (1행 6개 프레임 순환)
+      if (rabbitState == RabbitState.run) {
+        frameTimer++;
+        int frameDelay = (8 - (gameSpeed * 0.5)).clamp(3, 8).toInt();
+        if (frameTimer >= frameDelay) {
+          frameTimer = 0;
+          currentFrame = (currentFrame + 1) % 6;
+        }
+      }
+
+      // 장애물 스폰
+      double minSafeTime = (elapsedTime < 30.0) ? 1.8 : 1.4;
+      if (lastSpawnType != null) {
+        minSafeTime += 0.3;
+      }
+
+      if (timeSinceLastSpawn >= minSafeTime) {
+        timeSinceLastSpawn = 0.0;
+        ObstacleType newType = _random.nextBool() ? ObstacleType.ground : ObstacleType.air;
+        lastSpawnType = newType;
+        obstacles.add(Obstacle(x: 900, type: newType));
+      }
+
+      // 충돌 판정
+      for (int i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].x -= gameSpeed * 1.8;
+
+        double rabbitWidth = (rabbitState == RabbitState.slide) ? 80 : 55;
+        double rabbitHeight = (rabbitState == RabbitState.slide) ? 35 : 65;
+        double rabbitLeft = 100;
+        double rabbitBottom = rabbitY;
+
+        double obsWidth = 35;
+        double obsHeight = 35;
+        double obsLeft = obstacles[i].x;
+        double obsBottom = (obstacles[i].type == ObstacleType.ground) ? 0 : 50;
+
+        bool hitX = (rabbitLeft < obsLeft + obsWidth) && (rabbitLeft + rabbitWidth > obsLeft);
+        bool hitY = (rabbitBottom < obsBottom + obsHeight) && (rabbitBottom + rabbitHeight > obsBottom);
+
+        if (hitX && hitY) {
+          _gameOver();
+        }
+
+        if (obstacles[i].x < -100) {
+          obstacles.removeAt(i);
+        }
+      }
+    });
+  }
+
+  void _jump() {
+    if (rabbitState == RabbitState.run) {
+      setState(() {
+        rabbitState = RabbitState.jump;
+        jumpProgress = 0.0;
+        currentFrame = 0;
+      });
+    }
+  }
+
+  void _slide() {
+    if (rabbitState == RabbitState.run) {
+      setState(() {
+        rabbitState = RabbitState.slide;
+        slideProgress = 0.0;
+        currentFrame = 0;
+      });
+    }
+  }
+
+  void _gameOver() {
+    _gameLoop?.cancel();
+    setState(() {
+      isGameOver = true;
+      isPlaying = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _gameLoop?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('토끼 탈출기 (Parallax Edition)'), backgroundColor: Colors.orange),
+      body: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: RabbitGamePainter(
+                      spriteSheet: spriteSheet,
+                      rabbitY: rabbitY,
+                      rabbitState: rabbitState,
+                      currentFrame: currentFrame,
+                      obstacles: obstacles,
+                      elapsedTime: elapsedTime,
+                      bgScrollOffset: bgScrollOffset,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 20,
+                  left: 20,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(12)),
+                    child: Text(
+                      '점수: $score',
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ),
+                ),
+                if (!isPlaying && !isGameOver)
+                  Center(
+                    child: isImageLoading
+                        ? const CircularProgressIndicator()
+                        : ElevatedButton(
+                            onPressed: _startGame,
+                            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 18)),
+                            child: const Text('게임 시작', style: TextStyle(fontSize: 22)),
+                          ),
+                  ),
+                if (isGameOver)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(16)),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('GAME OVER', style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.redAccent)),
+                          const SizedBox(height: 10),
+                          Text('최종 점수: $score', style: const TextStyle(fontSize: 24, color: Colors.white)),
+                          const SizedBox(height: 20),
+                          ElevatedButton(
+                            onPressed: _startGame,
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                            child: const Text('다시 도전', style: TextStyle(color: Colors.white, fontSize: 18)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            color: Colors.brown.shade900,
+            padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 24.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: isPlaying ? _jump : null,
+                    icon: const Icon(Icons.arrow_upward, size: 28),
+                    label: const Text('JUMP (점프)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.amber.shade700,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: isPlaying ? _slide : null,
+                    icon: const Icon(Icons.arrow_downward, size: 28),
+                    label: const Text('SLIDE (슬라이드)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.lightBlue.shade700,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// CustomPainter (Rabbit Spritesheet 렌더링)
+// ==========================================
+class RabbitGamePainter extends CustomPainter {
+  final ui.Image? spriteSheet;
+  final double rabbitY;
+  final RabbitState rabbitState;
+  final int currentFrame;
+  final List<Obstacle> obstacles;
+  final double elapsedTime;
+  final double bgScrollOffset;
+
+  RabbitGamePainter({
+    required this.spriteSheet,
+    required this.rabbitY,
+    required this.rabbitState,
+    required this.currentFrame,
+    required this.obstacles,
+    required this.elapsedTime,
+    required this.bgScrollOffset,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    double groundY = size.height - 50;
+    double cycleTime = (elapsedTime % 120.0) / 120.0;
+    
+    Color skyTop, skyBottom, mountainColor, forestColor;
+    bool showStars = false;
+
+    if (cycleTime < 0.2) {
+      double t = cycleTime / 0.2;
+      skyTop = Color.lerp(const Color(0xFF2C3E50), const Color(0xFF89F7FE), t)!;
+      skyBottom = Color.lerp(const Color(0xFFFD746C), const Color(0xFF66A6FF), t)!;
+      mountainColor = Color.lerp(const Color(0xFF34495E), const Color(0xFF5D6D7E), t)!;
+      forestColor = Color.lerp(const Color(0xFF1E8449), const Color(0xFF27AE60), t)!;
+    } else if (cycleTime < 0.5) {
+      skyTop = const Color(0xFF00B4DB);
+      skyBottom = const Color(0xFF0083B0);
+      mountainColor = const Color(0xFF4A6572);
+      forestColor = const Color(0xFF2E7D32);
+    } else if (cycleTime < 0.7) {
+      double t = (cycleTime - 0.5) / 0.2;
+      skyTop = Color.lerp(const Color(0xFF00B4DB), const Color(0xFF2C3E50), t)!;
+      skyBottom = Color.lerp(const Color(0xFF0083B0), const Color(0xFFFD746C), t)!;
+      mountainColor = Color.lerp(const Color(0xFF4A6572), const Color(0xFF34495E), t)!;
+      forestColor = Color.lerp(const Color(0xFF2E7D32), const Color(0xFF1B5E20), t)!;
+    } else {
+      double t = (cycleTime - 0.7) / 0.3;
+      skyTop = Color.lerp(const Color(0xFF0F2027), const Color(0xFF2C3E50), t)!;
+      skyBottom = Color.lerp(const Color(0xFF203A43), const Color(0xFFFD746C), t)!;
+      mountainColor = const Color(0xFF1C2833);
+      forestColor = const Color(0xFF0E6251);
+      showStars = t < 0.8;
+    }
+
+    // 배경 하늘
+    Rect skyRect = Rect.fromLTWH(0, 0, size.width, size.height);
+    Paint skyPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        const Offset(0, 0),
+        Offset(0, size.height),
+        [skyTop, skyBottom],
+      );
+    canvas.drawRect(skyRect, skyPaint);
+
+    if (showStars) {
+      Paint starPaint = Paint()..color = Colors.white.withOpacity(0.8);
+      for (int i = 0; i < 20; i++) {
+        double sx = (i * 77 + bgScrollOffset * 0.02) % size.width;
+        double sy = (i * 33) % (size.height * 0.4);
+        canvas.drawCircle(Offset(sx, sy), (i % 2 == 0) ? 1.5 : 2.5, starPaint);
+      }
+    }
+
+    // Parallax 산맥 레이어들
+    _drawMountainLayer(canvas, size, groundY, bgScrollOffset * 0.08, mountainColor.withOpacity(0.5), 180, 280);
+    _drawMountainLayer(canvas, size, groundY, bgScrollOffset * 0.18, mountainColor, 120, 180);
+    _drawHillLayer(canvas, size, groundY, bgScrollOffset * 0.30, mountainColor.withOpacity(0.8));
+    _drawForestLayer(canvas, size, groundY, bgScrollOffset * 0.50, forestColor);
+
+    // 바닥 지면
+    Paint groundPaint = Paint()..color = const Color(0xFF3E2723);
+    canvas.drawRect(Rect.fromLTWH(0, groundY, size.width, 50), groundPaint);
+
+    Paint grassPaint = Paint()..color = const Color(0xFF558B2F);
+    canvas.drawRect(Rect.fromLTWH(0, groundY, size.width, 10), grassPaint);
+
+    // 토끼 캐릭터 크기 및 출력 위치 설정
+    double drawW = (rabbitState == RabbitState.slide) ? 100 : 75;
+    double drawH = (rabbitState == RabbitState.slide) ? 55 : 85;
+    double destX = 100;
+    double destY = groundY - drawH - rabbitY;
+    Rect destRect = Rect.fromLTWH(destX, destY, drawW, drawH);
+
+    if (spriteSheet != null) {
+      // 스프라이트시트 6열 3행 크기 자동 계산
+      double cellW = spriteSheet!.width / 6.0;
+      double cellH = spriteSheet!.height / 3.0;
+
+      int row = 0;
+      if (rabbitState == RabbitState.run) row = 0;
+      if (rabbitState == RabbitState.jump) row = 1;
+      if (rabbitState == RabbitState.slide) row = 2;
+
+      // 원본 시트의 셀마다 여백이 달라 캐릭터가 순간적으로 작아지거나
+      // 사라져 보이지 않도록 셀 안쪽을 상태별로 살짝 크롭한다.
+      double insetX = cellW * 0.05;
+      double insetTop = cellH * 0.04;
+      double insetBottom = cellH * 0.04;
+      if (rabbitState == RabbitState.jump) {
+        insetX = cellW * 0.035;
+        insetTop = cellH * 0.02;
+        insetBottom = cellH * 0.02;
+      } else if (rabbitState == RabbitState.slide) {
+        insetX = cellW * 0.02;
+        insetTop = cellH * 0.08;
+        insetBottom = cellH * 0.02;
+      }
+
+      Rect srcRect = Rect.fromLTWH(
+        currentFrame * cellW + insetX,
+        row * cellH + insetTop,
+        cellW - insetX * 2,
+        cellH - insetTop - insetBottom,
+      );
+      canvas.drawImageRect(
+        spriteSheet!,
+        srcRect,
+        destRect,
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+    } else {
+      Paint fallbackPaint = Paint()..color = Colors.white;
+      canvas.drawOval(destRect, fallbackPaint);
+    }
+
+    // 장애물
+    TextPainter tp = TextPainter(textDirection: TextDirection.ltr);
+    for (var obs in obstacles) {
+      String emoji = (obs.type == ObstacleType.ground) ? '💩' : '🪨';
+      double obsY = (obs.type == ObstacleType.ground) ? groundY - 42 : groundY - 95;
+
+      tp.text = TextSpan(text: emoji, style: const TextStyle(fontSize: 32));
+      tp.layout();
+      tp.paint(canvas, Offset(obs.x, obsY));
+    }
+  }
+
+  void _drawMountainLayer(Canvas canvas, Size size, double groundY, double offset, Color color, double minH, double maxH) {
+    final Paint paint = Paint()..color = color;
+    final double segment = 260.0;
+    final double startX = -(offset % segment) - segment * 2;
+    final Path path = Path()..moveTo(startX, groundY);
+
+    // 삼각형 대신 서로 다른 높이와 폭의 곡선 능선을 이어 2D 게임 산맥을 만든다.
+    double x = startX;
+    int i = 0;
+    while (x < size.width + segment * 2) {
+      final double variation = (sin(i * 1.73) + sin(i * 0.61 + 1.2)) * 0.18;
+      final double peakH = (minH + (maxH - minH) * (0.52 + variation)).clamp(minH, maxH);
+      final double nextH = (minH * 0.42 + (sin(i * 1.11 + 0.8) + 1) * minH * 0.13);
+      final double peakX = x + segment * (0.42 + 0.10 * sin(i * 0.91));
+      final double endX = x + segment;
+      final double endY = groundY - nextH;
+
+      path.cubicTo(
+        x + segment * 0.16, groundY - peakH * 0.40,
+        peakX - segment * 0.16, groundY - peakH * 0.92,
+        peakX, groundY - peakH,
+      );
+      path.cubicTo(
+        peakX + segment * 0.15, groundY - peakH * 0.90,
+        endX - segment * 0.18, endY - peakH * 0.12,
+        endX, endY,
+      );
+      x = endX;
+      i++;
+    }
+
+    path.lineTo(x, groundY);
+    path.lineTo(startX, groundY);
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  void _drawHillLayer(Canvas canvas, Size size, double groundY, double offset, Color color) {
+    Paint paint = Paint()..color = color;
+    Path path = Path()..moveTo(0, groundY);
+
+    double step = 200;
+    double startX = -(offset % step) - step;
+
+    for (double x = startX; x < size.width + step * 2; x += step) {
+      path.quadraticBezierTo(x + step / 2, groundY - 90, x + step, groundY);
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  void _drawForestLayer(Canvas canvas, Size size, double groundY, double offset, Color color) {
+    Paint paint = Paint()..color = color;
+    double treeSpacing = 40;
+    double startX = -(offset % treeSpacing) - treeSpacing;
+
+    for (double x = startX; x < size.width + treeSpacing; x += treeSpacing) {
+      Path tree = Path()
+        ..moveTo(x, groundY)
+        ..lineTo(x + 15, groundY - 45)
+        ..lineTo(x + 30, groundY)
+        ..close();
+      canvas.drawPath(tree, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ==========================================
+// GAME 2: 3초 반응속도 테스트 (ReactionTestScreen)
+// ==========================================
+class ReactionTestScreen extends StatefulWidget {
+  const ReactionTestScreen({super.key});
+
+  @override
+  State<ReactionTestScreen> createState() => _ReactionTestScreenState();
+}
+
+enum ReactionState { waiting, ready, result, tooEarly }
+
+class _ReactionTestScreenState extends State<ReactionTestScreen> {
+  ReactionState _state = ReactionState.waiting;
+  Timer? _timer;
+  final Stopwatch _stopwatch = Stopwatch();
+  int? _reactionTimeMs;
+
+  void _startTest() {
+    setState(() {
+      _state = ReactionState.ready;
+    });
+
+    int randomDelay = 2000 + Random().nextInt(3000);
+    _timer?.cancel();
+    _timer = Timer(Duration(milliseconds: randomDelay), () {
+      if (_state == ReactionState.ready) {
+        setState(() {
+          _state = ReactionState.result;
+          _stopwatch.reset();
+          _stopwatch.start();
+        });
+      }
+    });
+  }
+
+  void _handleTap() {
+    if (_state == ReactionState.ready) {
+      _timer?.cancel();
+      setState(() {
+        _state = ReactionState.tooEarly;
+      });
+    } else if (_state == ReactionState.result) {
+      _stopwatch.stop();
+      setState(() {
+        _reactionTimeMs = _stopwatch.elapsedMilliseconds;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Color bgColor = Colors.blue;
+    String message = "터치하여 반응속도 테스트를 시작하세요";
+
+    if (_state == ReactionState.ready) {
+      bgColor = Colors.red;
+      message = "초록색으로 바뀌면 즉시 터치하세요!";
+    } else if (_state == ReactionState.result) {
+      if (_reactionTimeMs == null) {
+        bgColor = Colors.green;
+        message = "지금 터치하세요!";
+      } else {
+        bgColor = Colors.indigo;
+        message = "반응 속도: $_reactionTimeMs ms\n(다시 하려면 터치)";
+      }
+    } else if (_state == ReactionState.tooEarly) {
+      bgColor = Colors.orange;
+      message = "너무 빨랐습니다!\n초록색이 된 후에 터치하세요. (다시 하려면 터치)";
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('3초 반응속도 테스트'), backgroundColor: Colors.green),
+      body: GestureDetector(
+        onTap: () {
+          if (_state == ReactionState.waiting || _state == ReactionState.tooEarly || _reactionTimeMs != null) {
+            _reactionTimeMs = null;
+            _startTest();
+          } else {
+            _handleTap();
+          }
+        },
+        child: Container(
+          color: bgColor,
+          child: Center(
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// GAME 3: 1to25 순발력 측정 (OneToTwentyFiveScreen)
+// ==========================================
+class OneToTwentyFiveScreen extends StatefulWidget {
+  const OneToTwentyFiveScreen({super.key});
+
+  @override
+  State<OneToTwentyFiveScreen> createState() => _OneToTwentyFiveScreenState();
+}
+
+class _OneToTwentyFiveScreenState extends State<OneToTwentyFiveScreen> {
+  List<int> numbers = [];
+  int currentTarget = 1;
+  final Stopwatch _stopwatch = Stopwatch();
+  Timer? _timer;
+  String elapsedTime = "0.00 초";
+  bool isCompleted = false;
+  bool isGameStarted = false;
+
+  void _initGame() {
+    numbers = List.generate(25, (index) => index + 1)..shuffle();
+    currentTarget = 1;
+    elapsedTime = "0.00 초";
+    isCompleted = false;
+    isGameStarted = true;
+
+    _stopwatch.reset();
+    _stopwatch.start();
+
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(milliseconds: 10), (timer) {
+      if (_stopwatch.isRunning) {
+        setState(() {
+          elapsedTime = "${(_stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(2)} 초";
+        });
+      }
+    });
+  }
+
+  void _onNumberTap(int number) {
+    if (!isGameStarted || isCompleted) return;
+
+    if (number == currentTarget) {
+      setState(() {
+        if (currentTarget == 25) {
+          _stopwatch.stop();
+          _timer?.cancel();
+          isCompleted = true;
+        } else {
+          currentTarget++;
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('1to25 순발력 측정'), backgroundColor: Colors.purple),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('다음 숫자: $currentTarget', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text('경과 시간: $elapsedTime', style: const TextStyle(fontSize: 20, color: Colors.purple, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (!isGameStarted)
+              Expanded(
+                child: Center(
+                  child: ElevatedButton(
+                    onPressed: _initGame,
+                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16)),
+                    child: const Text('게임 시작', style: TextStyle(fontSize: 22)),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                  ),
+                  itemCount: 25,
+                  itemBuilder: (context, index) {
+                    int num = numbers[index];
+                    bool isCleared = num < currentTarget;
+
+                    return ElevatedButton(
+                      onPressed: isCleared ? null : () => _onNumberTap(num),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isCleared ? Colors.grey.shade300 : Colors.purple.shade400,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: Text(
+                        isCleared ? '' : '$num',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            if (isCompleted)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    Text('🎉 완료! 기록: $elapsedTime', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.green)),
+                    const SizedBox(height: 10),
+                    ElevatedButton(onPressed: _initGame, child: const Text('다시 도전')),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
