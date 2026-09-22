@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- 당근 몸통 그라데이션 -->
+    <linearGradient id="carrotBody" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF9233" />
+      <stop offset="50%" stop-color="#FF6B00" />
+      <stop offset="100%" stop-color="#E64A00" />
+    </linearGradient>
+
+    <!-- 잎사귀 그라데이션 -->
+    <linearGradient id="leafGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#4CAF50" />
+      <stop offset="100%" stop-color="#8BC34A" />
+    </linearGradient>
+
+    <!-- 그림자 필터 -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="6" flood-color="#000000" flood-opacity="0.15" />
+    </filter>
+  </defs>
+
+  <g filter="url(#dropShadow)">
+    <!-- 당근 잎사귀 (3갈래 캐주얼 스타일) -->
+    <!-- 왼쪽 잎 -->
+    <path d="M 230,160 C 180,130 140,80 160,30 C 190,50 210,100 240,140 Z" fill="url(#leafGrad)" stroke="#2E7D32" stroke-width="6" stroke-linejoin="round" />
+    <!-- 중앙 잎 -->
+    <path d="M 256,150 C 240,90 230,30 256,10 C 282,30 272,90 256,150 Z" fill="url(#leafGrad)" stroke="#2E7D32" stroke-width="6" stroke-linejoin="round" />
+    <!-- 오른쪽 잎 -->
+    <path d="M 282,160 C 332,130 372,80 352,30 C 322,50 302,100 272,140 Z" fill="url(#leafGrad)" stroke="#2E7D32" stroke-width="6" stroke-linejoin="round" />
+
+    <!-- 당근 몸통 -->
+    <path d="M 170,160 
+             C 170,130 342,130 342,160 
+             C 342,230 310,320 270,470 
+             C 263,490 249,490 242,470 
+             C 202,320 170,230 170,160 Z" 
+          fill="url(#carrotBody)" 
+          stroke="#BF360C" 
+          stroke-width="10" 
+          stroke-linejoin="round" />
+
+    <!-- 하이라이트 (광택 효과) -->
+    <path d="M 195,170 C 190,210 210,300 225,370" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" opacity="0.5" fill="none" />
+
+    <!-- 당근 무늬 (선명한 질감 표현) -->
+    <path d="M 290,210 Q 310,215 320,210" stroke="#D84315" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 195,260 Q 220,265 235,260" stroke="#D84315" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 275,320 Q 295,325 305,320" stroke="#D84315" stroke-width="7" stroke-linecap="round" fill="none" />
+    <path d="M 215,370 Q 235,373 245,370" stroke="#D84315" stroke-width="7" stroke-linecap="round" fill="none" />
+  </g>
+</svg>

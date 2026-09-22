@@ -1,17 +1,30 @@
-# daily_fortune
+# 🎮 Daily Fortune - 아케이드 미니게임 모음집
 
-A new Flutter project.
+**Daily Fortune**은 다양한 순발력 측정과 아케이드 감성을 즐길 수 있는 Flutter 기반의 **4종 미니게임 컬렉션** 앱입니다. (이름잘못지음)
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 🌟 주요 게임 구성[cite: 3]
 
-A few resources to get you started if this is your first Flutter project:
+| 게임명 | 설명 | 주요 특징 및 조작 방식 |
+| :--- | :--- | :--- |
+| **🐰 토끼 탈출기** | 산속을 달리며 장애물을 피하는 패럴랙스 아케이드 게임[cite: 3] | • **가로 모드 전용** 레이아웃 지원[cite: 3]<br>• 점프/슬라이드 버튼 및 키보드 조작(Space/W/S) 지원[cite: 3]<br>• 시간에 따른 낮/밤 배경 변화 및 스피드 증가[cite: 3] |
+| **⚡ 3초 반응속도 테스트** | 화면 색상 변화에 맞춘 순발력 측정 게임[cite: 3] | • 초록색 전환 시 즉시 터치[cite: 3]<br>• millisecond 단위 측정 및 등급 산정[cite: 3] |
+| **🎯 1to25 순발력 측정** | 1부터 25까지의 숫자를 순서대로 터치하는 게임[cite: 3] | • 무작위로배치된 숫자 그리드 터치[cite: 3]<br>• 소수점 둘째 자리 타임어택 측정[cite: 3] |
+| **🚀 Missile Escape** | 탄막을 피하며 생존하는 아케이드 비행 슈팅 게임[cite: 3] | • 좌측 조이스틱(이동) + 우측 필살기(탄막 제거 및 무적)[cite: 3]<br>• 점수 누적에 따른 필살기 충전 시스템[cite: 3] |
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+---
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 🚀 주요 기능 및 특징[cite: 3]
+
+* **통합 미니게임 아케이드 UI**: 세련된 다크 모드 스타일의 카드 UI를 통해 4가지 게임을 한눈에 선택 및 플레이 가능[cite: 3].
+* **결과 공유 기능**: 게임이 끝난 후 최고 기록과 생존 시간/반응속도 결과를 클립보드에 바로 복사하여 공유 지원[cite: 3].
+* **멀티 플랫폼 조작 지원**: 터치 컨트롤(조이스틱/버튼)뿐만 아니라 키보드 입력(방향키, W/S, Space)을 완벽 지원[cite: 3].
+
+---
+
+## 🛠 실행 방법
+
+### 요구 사항
+* **Flutter SDK**: 3.0.0 이상 권장
+* **Dart SDK**: 3.0.0 이상

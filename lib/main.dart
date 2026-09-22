@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart'; // SVG 패키지 추가
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -114,7 +115,7 @@ class MainMenuScreen extends StatelessWidget {
                       context,
                       tag: 'GAME 01',
                       title: '토끼 탈출기',
-                      subtitle: '산속을 깡총깡총 달리는 패럴랙스 아케이드',
+                      subtitle: '당근을 먹고 피버 타임으로 무적 점프 달리기!',
                       icon: Icons.directions_run_rounded,
                       gradientColors: [const Color(0xFFFF9800), const Color(0xFFF57C00)],
                       targetScreen: const RabbitRunScreen(),
@@ -292,6 +293,30 @@ class Obstacle {
   Obstacle({required this.x, required this.type});
 }
 
+class Carrot {
+  double x;
+  double y;
+  Carrot({required this.x, required this.y});
+}
+
+class FireParticle {
+  double x;
+  double y;
+  double vx;
+  double vy;
+  double life;
+  double size;
+
+  FireParticle({
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.life,
+    required this.size,
+  });
+}
+
 class SpriteFrame {
   final double x, y, w, h;
   const SpriteFrame(this.x, this.y, this.w, this.h);
@@ -348,6 +373,10 @@ const double kAirObsWidth = 46.0;
 const double kAirObsBottom = 42.0;
 const double kAirObsTop = 175.0;
 
+// SVG 당근 크기 지정 (가로 36px, 세로 36px)
+const double kCarrotWidth = 36.0;
+const double kCarrotHeight = 36.0;
+
 bool rabbitHitsObstacle({
   required RabbitState state,
   required double rabbitY,
@@ -367,6 +396,18 @@ bool rabbitHitsObstacle({
       (kRabbitHitLeft + kRabbitHitWidth > obstacleX);
   final bool hitY = (rabbitY < obsTop) && (rabbitY + rabbitHeight > obsBottom);
 
+  return hitX && hitY;
+}
+
+bool rabbitCollectsCarrot({
+  required RabbitState state,
+  required double rabbitY,
+  required double carrotX,
+  required double carrotY,
+}) {
+  final double rabbitHeight = (state == RabbitState.slide) ? kRabbitSlideHeight : kRabbitRunHeight;
+  final bool hitX = (kRabbitHitLeft < carrotX + kCarrotWidth) && (kRabbitHitLeft + kRabbitHitWidth > carrotX);
+  final bool hitY = (rabbitY < carrotY + kCarrotHeight) && (rabbitY + rabbitHeight > carrotY - 10);
   return hitX && hitY;
 }
 
@@ -468,6 +509,16 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
   ObstacleType? lastSpawnType;
   final Random _random = Random();
 
+  // --- 당근 & 피버 타임 변수 ---
+  List<Carrot> carrots = [];
+  double timeSinceLastCarrot = 0.0;
+  int carrotGauge = 0;
+  final int maxCarrotGauge = 5;
+  bool isFeverMode = false;
+  double feverTimeRemaining = 0.0;
+  final double feverDuration = 6.0;
+  List<FireParticle> fireParticles = [];
+
   final FocusNode _focusNode = FocusNode();
 
   @override
@@ -550,12 +601,18 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
       slideProgress = 0.0;
       rabbitState = RabbitState.run;
       obstacles.clear();
+      carrots.clear();
+      fireParticles.clear();
       elapsedTime = 0.0;
       gameSpeed = 3.0;
       bgScrollOffset = 0.0;
       timeSinceLastSpawn = 0.0;
+      timeSinceLastCarrot = 0.0;
       lastSpawnType = null;
       currentFrame = 0;
+      carrotGauge = 0;
+      isFeverMode = false;
+      feverTimeRemaining = 0.0;
     });
 
     _gameLoop?.cancel();
@@ -570,19 +627,58 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
     setState(() {
       elapsedTime += dt;
       timeSinceLastSpawn += dt;
+      timeSinceLastCarrot += dt;
       score = (elapsedTime * 10).toInt();
 
-      if (elapsedTime < 20.0) {
-        gameSpeed = 3.0;
-      } else if (elapsedTime < 45.0) {
-        gameSpeed = 3.6;
-      } else if (elapsedTime < 75.0) {
-        gameSpeed = 4.3;
-      } else {
-        gameSpeed = min(6.0, 4.3 + (elapsedTime - 75.0) * 0.02);
+      // 피버 타임 제어
+      if (isFeverMode) {
+        feverTimeRemaining -= dt;
+        if (feverTimeRemaining <= 0) {
+          isFeverMode = false;
+          feverTimeRemaining = 0.0;
+          carrotGauge = 0;
+        }
       }
 
+      // 속도 설정 (피버 타임 시 가속)
+      double baseSpeed;
+      if (elapsedTime < 20.0) {
+        baseSpeed = 3.0;
+      } else if (elapsedTime < 45.0) {
+        baseSpeed = 3.6;
+      } else if (elapsedTime < 75.0) {
+        baseSpeed = 4.3;
+      } else {
+        baseSpeed = min(6.0, 4.3 + (elapsedTime - 75.0) * 0.02);
+      }
+      gameSpeed = isFeverMode ? baseSpeed * 1.6 : baseSpeed;
+
       bgScrollOffset += gameSpeed;
+
+      // 피버 타임 불꽃 파티클 생성 및 업데이트
+      if (isFeverMode) {
+        for (int i = 0; i < 3; i++) {
+          fireParticles.add(
+            FireParticle(
+              x: kRabbitCenterX + (_random.nextDouble() - 0.5) * 40,
+              y: rabbitY + _random.nextDouble() * 30,
+              vx: (_random.nextDouble() - 0.5) * 40,
+              vy: 60 + _random.nextDouble() * 100,
+              life: 1.0,
+              size: 6 + _random.nextDouble() * 8,
+            ),
+          );
+        }
+      }
+
+      for (int i = fireParticles.length - 1; i >= 0; i--) {
+        fireParticles[i].life -= dt * 2.5;
+        fireParticles[i].x += fireParticles[i].vx * dt;
+        fireParticles[i].y += fireParticles[i].vy * dt;
+        if (fireParticles[i].life <= 0) {
+          fireParticles.removeAt(i);
+        }
+      }
 
       if (rabbitState == RabbitState.jump) {
         jumpProgress += dt / jumpDurationSeconds;
@@ -610,13 +706,47 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
 
       if (rabbitState == RabbitState.run) {
         frameTimer++;
-        int frameDelay = (8 - (gameSpeed * 0.5)).clamp(3, 8).toInt();
+        int frameDelay = (8 - (gameSpeed * 0.5)).clamp(2, 8).toInt();
         if (frameTimer >= frameDelay) {
           frameTimer = 0;
           currentFrame = (currentFrame + 1) % 6;
         }
       }
 
+      // 당근 생성
+      if (timeSinceLastCarrot >= 2.2 + _random.nextDouble() * 1.5) {
+        timeSinceLastCarrot = 0.0;
+        double carrotHeight = _random.nextBool() ? 15.0 : 80.0;
+        carrots.add(Carrot(x: 950, y: carrotHeight));
+      }
+
+      // 당근 이동 및 충돌 체크
+      for (int i = carrots.length - 1; i >= 0; i--) {
+        carrots[i].x -= gameSpeed * 1.8;
+
+        if (rabbitCollectsCarrot(
+          state: rabbitState,
+          rabbitY: rabbitY,
+          carrotX: carrots[i].x,
+          carrotY: carrots[i].y,
+        )) {
+          carrots.removeAt(i);
+          if (!isFeverMode) {
+            carrotGauge++;
+            if (carrotGauge >= maxCarrotGauge) {
+              isFeverMode = true;
+              feverTimeRemaining = feverDuration;
+            }
+          }
+          continue;
+        }
+
+        if (carrots[i].x < -50) {
+          carrots.removeAt(i);
+        }
+      }
+
+      // 장애물 생성
       double minSafeTime = (elapsedTime < 30.0) ? 1.8 : 1.4;
       if (timeSinceLastSpawn >= minSafeTime) {
         timeSinceLastSpawn = 0.0;
@@ -625,6 +755,7 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
         obstacles.add(Obstacle(x: 900, type: newType));
       }
 
+      // 장애물 이동 및 충돌 체크
       for (int i = obstacles.length - 1; i >= 0; i--) {
         obstacles[i].x -= gameSpeed * 1.8;
 
@@ -634,7 +765,13 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
           type: obstacles[i].type,
           obstacleX: obstacles[i].x,
         )) {
-          _gameOver();
+          if (isFeverMode) {
+            // 피버 타임일 때는 장애물을 무적으로 돌파 및 제거!
+            obstacles.removeAt(i);
+            continue;
+          } else {
+            _gameOver();
+          }
         }
 
         if (obstacles[i].x < -100) {
@@ -903,10 +1040,26 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
                       rabbitState: rabbitState,
                       currentFrame: currentFrame,
                       obstacles: obstacles,
+                      carrots: carrots,
+                      fireParticles: fireParticles,
+                      isFeverMode: isFeverMode,
                       elapsedTime: elapsedTime,
                       bgScrollOffset: bgScrollOffset,
                     ),
                   ),
+                  // Canvas 오버레이 형태로 SVG 당근들을 배치
+                  ...carrots.map((c) {
+                    final double groundY = constraints.maxHeight - 40;
+                    return Positioned(
+                      left: c.x,
+                      top: groundY - c.y - kCarrotHeight,
+                      child: SvgPicture.asset(
+                        'assets/carrot.svg',
+                        width: kCarrotWidth,
+                        height: kCarrotHeight,
+                      ),
+                    );
+                  }).toList(),
                   SafeArea(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -917,6 +1070,36 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
                             child: _glassChip(
                               padding: const EdgeInsets.all(8),
                               child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // 당근 피버 게이지 UI (SVG 아이콘 활용)
+                          _glassChip(
+                            child: Row(
+                              children: [
+                                isFeverMode
+                                    ? const Text('🔥 FEVER ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orangeAccent))
+                                    : Padding(
+                                        padding: const EdgeInsets.only(right: 6.0),
+                                        child: SvgPicture.asset('assets/carrot.svg', width: 18, height: 18),
+                                      ),
+                                SizedBox(
+                                  width: 100,
+                                  height: 12,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: LinearProgressIndicator(
+                                      value: isFeverMode
+                                          ? (feverTimeRemaining / feverDuration).clamp(0.0, 1.0)
+                                          : (carrotGauge / maxCarrotGauge).clamp(0.0, 1.0),
+                                      backgroundColor: Colors.white24,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        isFeverMode ? Colors.redAccent : Colors.orangeAccent,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           const Spacer(),
@@ -985,9 +1168,16 @@ class _RabbitRunScreenState extends State<RabbitRunScreen> {
                                 ),
                                 const SizedBox(height: 14),
                                 _glassChip(
-                                  child: const Text(
-                                    '땅의 장애물은 점프로,  떨어지는 바위는 슬라이드로!',
-                                    style: TextStyle(fontSize: 13, color: Colors.white),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SvgPicture.asset('assets/carrot.svg', width: 20, height: 20),
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        '당근을 먹고 피버 타임(불꽃 무적)을 발동해보세요!',
+                                        style: TextStyle(fontSize: 14, color: Colors.amberAccent, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -1077,6 +1267,9 @@ class RabbitGamePainter extends CustomPainter {
   final RabbitState rabbitState;
   final int currentFrame;
   final List<Obstacle> obstacles;
+  final List<Carrot> carrots;
+  final List<FireParticle> fireParticles;
+  final bool isFeverMode;
   final double elapsedTime;
   final double bgScrollOffset;
 
@@ -1086,6 +1279,9 @@ class RabbitGamePainter extends CustomPainter {
     required this.rabbitState,
     required this.currentFrame,
     required this.obstacles,
+    required this.carrots,
+    required this.fireParticles,
+    required this.isFeverMode,
     required this.elapsedTime,
     required this.bgScrollOffset,
   });
@@ -1098,7 +1294,12 @@ class RabbitGamePainter extends CustomPainter {
     Color skyTop, skyBottom, mountainColor, forestColor;
     bool showStars = false;
 
-    if (cycleTime < 0.2) {
+    if (isFeverMode) {
+      skyTop = const Color(0xFF4A0000);
+      skyBottom = const Color(0xFF8B0000);
+      mountainColor = const Color(0xFF330000);
+      forestColor = const Color(0xFF550000);
+    } else if (cycleTime < 0.2) {
       double t = cycleTime / 0.2;
       skyTop = Color.lerp(const Color(0xFF2C3E50), const Color(0xFF89F7FE), t)!;
       skyBottom = Color.lerp(const Color(0xFFFD746C), const Color(0xFF66A6FF), t)!;
@@ -1148,7 +1349,7 @@ class RabbitGamePainter extends CustomPainter {
       );
     canvas.drawRect(skyRect, skyPaint);
 
-    if (showStars) {
+    if (showStars && !isFeverMode) {
       Paint starPaint = Paint()..color = Colors.white.withValues(alpha: 0.8);
       for (int i = 0; i < 20; i++) {
         double sx = (i * 77 + bgScrollOffset * 0.02) % size.width;
@@ -1186,14 +1387,14 @@ class RabbitGamePainter extends CustomPainter {
     _drawHillLayer(canvas, size, groundY, bgScrollOffset * 0.30, Color.lerp(forestColor, mountainColor, 0.55)!);
     _drawForestLayer(canvas, size, groundY, bgScrollOffset * 0.50, forestColor);
 
-    Paint groundPaint = Paint()..color = const Color(0xFF3E2723);
+    Paint groundPaint = Paint()..color = isFeverMode ? const Color(0xFF5D1D11) : const Color(0xFF3E2723);
     canvas.drawRect(Rect.fromLTWH(0, groundY, size.width, size.height - groundY), groundPaint);
 
-    Paint grassPaint = Paint()..color = const Color(0xFF558B2F);
+    Paint grassPaint = Paint()..color = isFeverMode ? const Color(0xFFD84315) : const Color(0xFF558B2F);
     canvas.drawRect(Rect.fromLTWH(0, groundY, size.width, 10), grassPaint);
 
     final Paint bladePaint = Paint()
-      ..color = const Color(0xFF7CB342)
+      ..color = isFeverMode ? const Color(0xFFFF7043) : const Color(0xFF7CB342)
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     final double bladeStart = -(bgScrollOffset % 26.0) - 26.0;
@@ -1202,6 +1403,15 @@ class RabbitGamePainter extends CustomPainter {
       canvas.drawLine(Offset(x + 13, groundY + 9), Offset(x + 10, groundY + 2), bladePaint);
     }
 
+    // --- 불꽃 파티클 효과 (피버 타임 토끼 주변) ---
+    for (final p in fireParticles) {
+      Paint firePaint = Paint()
+        ..color = Colors.orangeAccent.withOpacity(p.life.clamp(0.0, 1.0))
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+      canvas.drawCircle(Offset(p.x, groundY - p.y), p.size * p.life, firePaint);
+    }
+
+    // --- 토끼 캐릭터 그리기 ---
     final List<SpriteFrame> frames = framesFor(rabbitState);
     final SpriteFrame frame = frames[currentFrame.clamp(0, frames.length - 1)];
 
@@ -1215,6 +1425,13 @@ class RabbitGamePainter extends CustomPainter {
       drawH,
     );
 
+    if (isFeverMode) {
+      Paint auraPaint = Paint()
+        ..color = Colors.redAccent.withOpacity(0.6)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
+      canvas.drawOval(destRect.inflate(8), auraPaint);
+    }
+
     if (spriteSheet != null) {
       canvas.drawImageRect(
         spriteSheet!,
@@ -1227,6 +1444,7 @@ class RabbitGamePainter extends CustomPainter {
       canvas.drawOval(destRect, fallbackPaint);
     }
 
+    // --- 장애물 그리기 ---
     for (final obs in obstacles) {
       if (obs.type == ObstacleType.ground) {
         _drawGroundObstacle(canvas, obs.x, groundY);
@@ -1668,7 +1886,6 @@ class _ReactionTestScreenState extends State<ReactionTestScreen> {
           style: TextStyle(fontSize: 32, color: Colors.white, fontWeight: FontWeight.bold),
         );
       } else {
-        // 결과 카드 레이아웃
         return Container(
           padding: const EdgeInsets.all(28),
           decoration: BoxDecoration(
